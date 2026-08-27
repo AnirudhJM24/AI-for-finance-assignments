@@ -1,0 +1,19 @@
+# Source data (not distributable, licensed via WRDS or vendor)
+data/
+macros/
+*.csv
+
+# Notebook artefacts
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
