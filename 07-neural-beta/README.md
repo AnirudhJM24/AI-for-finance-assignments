@@ -77,7 +77,9 @@ Same table with Fama-French factors added:
 | Manufacturing | 1.140 | 0.654 |
 | Mining | 1.095 | 0.643 |
 
-Beta-sorted quintile portfolios over the test period, Fama-French model:
+Beta-sorted quintile portfolios over the test period, Fama-French model.
+**These numbers are superseded**; see *Strategy extension* below for why and
+for the construction that replaces them:
 
 | Quintile | Mean beta | Equal-weighted return | Value-weighted return |
 | --- | --- | --- | --- |
@@ -101,6 +103,120 @@ market. Mining and manufacturing sit below 1.
 
 Both quintile spreads are negative. High-beta stocks underperformed low-beta stocks
 over 2018 to 2023, by 74 basis points per month equal-weighted and 151 basis points
-value-weighted. This is the betting-against-beta pattern and it runs directly against
-what CAPM predicts. The value-weighted spread is the wider of the two, so it is not
-being driven by small illiquid names.
+value-weighted. This looks like the betting-against-beta pattern and it runs against
+what CAPM predicts.
+
+That reading does not survive a closer look at how the numbers were built, which is
+what the extension below is for.
+
+## Strategy extension
+
+The quintile table above is the most interesting result in the assignment and the
+least defensible as it stands. Three things are wrong with it.
+
+**The betas are attached to the wrong firm-months.** `build_neuralbeta_arrays` drops
+the first `lookback` rows of *each firm's* history, but the notebook reattaches the
+predictions by prepending `test_df.height - len(beta_pred)` NaNs to the top of the
+panel. That is the total dropped across all 80 firms, applied as a single offset in
+one place, so nearly every prediction lands on a different firm than the one it was
+computed for. The diagnostic cell added to the notebook reports the exact share.
+
+**The sort is pooled, not monthly.** The ranking runs over all 4,418 test
+observations at once, so a 2018 observation and a 2022 observation compete for the
+same bucket. The resulting "Q5 minus Q1" is a difference between two averages taken
+over different periods, not a return on a portfolio anyone could have held. The
+value-weighted version compounds this by weighting with the contemporaneous market
+cap, which lets a stock's own return in the holding month set its own weight.
+
+**A raw Q5-minus-Q1 spread is not a test of the CAPM.** It is long roughly one unit
+of market. Over 2018 to 2023 the market rose, so market exposure pushed the spread
+*up* while the reported number came out negative. Whatever the spread measures, the
+market component has to come out before it can be read as an anomaly.
+
+### What replaces it
+
+`bab.py` rebuilds the analysis around portfolios that could actually be held:
+
+- Betas ranked **within each month**, quintiles re-formed every month, held one month.
+- Value weights taken from the market cap at **formation**, not at the end of the
+  holding month.
+- A **Frazzini-Pedersen BAB factor**: rank-weighted long the low-beta half, short the
+  high-beta half, each leg levered to beta one so the factor is beta neutral at
+  formation. This is the construction the anomaly is actually defined by, and it
+  needs no market adjustment afterwards.
+- **Newey-West** t-statistics throughout, since monthly portfolio returns are
+  autocorrelated and a plain t-test overstates significance.
+- Alphas against the Fama-French factors, Sharpe, maximum drawdown, turnover,
+  returns net of costs, and the break-even cost that erases the gross return.
+- The same machinery run on a **60-month rolling OLS beta**, so the question becomes
+  the one worth asking: does trading on the learned beta beat trading on the
+  regression it replaces?
+
+The two constructions answer different questions, which the tests pin down. A
+security market line that is too flat — a constant alpha shared by every stock —
+shows up in the levered BAB factor and cancels exactly out of an unlevered
+Q5-minus-Q1 difference. An alpha proportional to beta does the reverse: it survives
+in the spread's market-adjusted alpha and is absorbed entirely when each leg is
+levered to beta one. Reporting only one of the two hides half the picture.
+
+### Universe
+
+`--universe assignment` reproduces the notebook's panel: ten firms per industry,
+each with a complete history over the whole sample. That filter is applied with
+hindsight. It keeps only firms that survived to 2023 and removes every delisting,
+which is precisely the set of returns a strategy would not have earned. It also
+leaves about 16 names per quintile, so a bucket return is a handful of stocks rather
+than a portfolio.
+
+`--universe wide` keeps every firm in the extract and lets the estimation window
+decide when a firm becomes tradable, which is the decision an investor could have
+made at the time. On synthetic data with a known planted effect, narrowing from 120
+firms to the 80-firm survivor panel cut the BAB t-statistic from 1.56 to 0.97 on
+identical returns, which is roughly what the narrower universe costs in power.
+
+### Two data notes
+
+`RET` includes dividends and is what a holder actually earns; the notebook fits and
+sorts on `RETX`, which excludes them. `run_bab.py` defaults to `RET` for returns and
+takes `--return-col RETX` to match the notebook.
+
+The Ken French factor files are distributed in percent while CRSP returns are
+decimals, and the notebook joins the two without rescaling. Any regression on those
+factors is off by 100x, and in the 80-feature variant the factors enter the network
+as inputs two orders of magnitude larger than every other feature — which is a
+plausible part of why adding them made test RMSE worse. `bab.load_fama_french`
+detects the scale and normalises to decimals.
+
+### Running it
+
+Export the betas from the last section of the notebook, then:
+
+```bash
+python run_bab.py --msf MSF_1996_2023.csv --fama FAMA.csv \
+                  --betas neural_betas.csv --start 2018 --end 2023 \
+                  --universe wide --plot bab.png
+```
+
+Every table prints as markdown, ready to paste back into this file. Without
+`--betas` the script still runs on the rolling-regression benchmark alone, which is
+a quick way to check the plumbing before wiring the network in.
+
+### Tests
+
+```bash
+python test_bab.py
+```
+
+17 checks. The portfolio and factor machinery is verified against simulated panels
+whose data-generating process fixes the right answer in advance: a planted flat
+security market line has to come back through the BAB factor at the level the
+leverage arithmetic implies, a planted beta-proportional alpha has to come back
+through the spread's alpha and not through BAB, and a panel with no anomaly has to
+produce no significant factor. The rest are hand-computed: bucket returns, rank
+weights, turnover, drawdown, break-even cost, and the month index round-tripping
+across December.
+
+### Results
+
+Not yet filled in. The source data is not in this repository, so the tables above
+have to be regenerated locally before any corrected number can be reported here.
