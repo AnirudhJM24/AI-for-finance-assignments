@@ -37,19 +37,37 @@ def load_crsp(path: str, start: int, end: int, lookback_years: int = 5) -> pl.Da
     full estimation window rather than a truncated one.
     """
     schema = {
-        "PERMNO": pl.Int64, "date": pl.Utf8, "SICCD": pl.Int32,
+        "PERMNO": pl.Int64, "date": pl.Utf8, "SICCD": pl.Int32, "SHRCD": pl.Int32,
         "RET": pl.Float64, "RETX": pl.Float64, "vwretd": pl.Float64,
         "SHROUT": pl.Int64, "PRC": pl.Float64,
     }
+    # CRSP marks a missing return with a letter code rather than a blank.
     df = pl.read_csv(path, schema_overrides=schema, try_parse_dates=False,
-                     null_values=["", "NA", "NaN", "B", "C"], ignore_errors=True)
-    df = df.with_columns(pl.col("date").str.strptime(pl.Date, format="%m/%d/%Y"))
+                     null_values=["", "NA", "NaN", "A", "B", "C", "D", "E",
+                                  "S", "T", "P"],
+                     ignore_errors=True)
+
+    # WRDS exports dates either ISO or US-style depending on how the query was
+    # set up, so pick the one that parses instead of assuming.
+    sample = df["date"].drop_nulls().head(1).item()
+    fmt = "%Y-%m-%d" if len(sample) == 10 and sample[4] == "-" else "%m/%d/%Y"
+    df = df.with_columns(pl.col("date").str.strptime(pl.Date, format=fmt))
     df = df.with_columns([
         pl.col("date").dt.year().alias("year"),
         pl.col("date").dt.month().alias("month"),
     ])
 
-    expr = pl.when(pl.col("SICCD").is_null()).then(pl.lit("Other"))
+    # Ordinary common shares only. Anything else is a fund, trust, ADR or unit,
+    # which does not belong in a cross-sectional equity sort.
+    if "SHRCD" in df.columns:
+        df = df.filter(pl.col("SHRCD").is_in([10, 11]))
+
+    # CRSP codes an unclassified firm as SICCD 9999, which a naive 9000-9999
+    # bucket files under Public Administration. On this extract that is 2,260
+    # firms, mostly SPACs and ordinary companies, and it makes Public
+    # Administration the largest industry in the panel.
+    expr = pl.when(pl.col("SICCD").is_null() | pl.col("SICCD").is_in([0, 9999]))
+    expr = expr.then(pl.lit("Unclassified"))
     for lo, hi, name in INDUSTRY_BOUNDS:
         expr = expr.when((pl.col("SICCD") >= lo) & (pl.col("SICCD") <= hi)).then(pl.lit(name))
     df = df.with_columns(expr.otherwise(pl.lit("Other")).alias("industry"))
@@ -142,6 +160,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--portfolios", type=int, default=5)
     ap.add_argument("--cost-bps", type=float, default=10.0,
                     help="one-way cost per unit of weight traded")
+    ap.add_argument("--min-price", type=float, default=0.0,
+                    help="drop firm-months whose formation price is below this; "
+                         "equal-weighted sorts over the whole CRSP tape are "
+                         "otherwise dominated by microcaps that are expensive "
+                         "to trade")
     ap.add_argument("--ols-window", type=int, default=60)
     ap.add_argument("--ols-min-periods", type=int, default=36)
     ap.add_argument("--plot", default=None, help="write a cumulative return chart here")
@@ -154,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
     raw = load_crsp(args.msf, args.start, args.end,
                     lookback_years=max(args.ols_window // 12 + 1, 2))
     raw = build_universe(raw, args.universe, args.start, args.end)
+    if args.min_price > 0:
+        raw = raw.filter(pl.col("PRC").abs() >= args.min_price)
     panel = to_panel(raw, args.return_col)
 
     ff = bab.load_fama_french(args.fama)
@@ -174,8 +199,13 @@ def main(argv: list[str] | None = None) -> int:
         panel = panel.merge(neural[["PERMNO", "year", "month", "beta_nn"]],
                             on=["PERMNO", "year", "month"], how="left")
         assert len(panel) == before, "the beta merge duplicated rows"
-        matched = panel["beta_nn"].notna().sum()
-        print(f"\nMatched {matched:,} of {before:,} firm-months to a neural beta.")
+        # Report coverage over the months actually traded. Counting against the
+        # whole loaded panel understates it, since the panel deliberately holds
+        # extra history for the estimation window.
+        window = panel[(panel["year"] >= args.start) & (panel["year"] <= args.end)]
+        matched = int(window["beta_nn"].notna().sum())
+        print(f"\nNeural betas cover {matched:,} of {len(window):,} firm-months "
+              f"in {args.start}-{args.end} ({matched / max(len(window), 1):.1%}).")
         if matched == 0:
             print("error: no rows matched. Check that the beta export covers "
                   "these years and uses the same PERMNOs.", file=sys.stderr)

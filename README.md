@@ -43,6 +43,13 @@ AUC, KS, and decile lift are what actually separate the models.
 5 of 11 in assignment 6, matching the full models both times. Adding Fama-French
 factors to the neural beta in assignment 7 made test RMSE worse.
 
+**A model can optimise the stated loss and still learn the wrong quantity.** The
+assignment 7 network minimises return-reconstruction error and gets a beta that
+correlates 0.59 with trailing volatility but only 0.24 with a regression beta, and
+is never negative once in 256,292 firm-months. Nothing in the loss curve says so;
+it takes asking what the output actually tracks. See
+[07-neural-beta](07-neural-beta/#strategy-extension).
+
 **Trees beat neural networks on tabular data at these sample sizes.** In assignment 9,
 LightGBM reaches test R2 0.591 against 0.263 for an MLP on 3,590 training rows.
 Neural networks are the right tool in assignments 7 and 8 because the loss there

@@ -189,13 +189,21 @@ detects the scale and normalises to decimals.
 
 ### Running it
 
-Export the betas from the last section of the notebook, then:
+Either export the betas from the last section of the notebook, or train on the full
+tape directly:
 
 ```bash
+python train_neural_beta.py --msf MSF_1996_2023.csv --out neural_betas.csv
 python run_bab.py --msf MSF_1996_2023.csv --fama FAMA.csv \
                   --betas neural_betas.csv --start 2018 --end 2023 \
                   --universe wide --plot bab.png
+python diagnose_beta.py --msf MSF_1996_2023.csv --betas neural_betas.csv
 ```
+
+`run_bab.py` reads whichever date format the WRDS export used, keeps share codes 10
+and 11, and takes `--min-price` for the robustness check above. The Fama-French file
+is the monthly research factors from Ken French's data library, reduced to
+`date,Mkt-RF,SMB,HML,RF` with the `YYYYMM` column named `date`.
 
 Every table prints as markdown, ready to paste back into this file. Without
 `--betas` the script still runs on the rolling-regression benchmark alone, which is
@@ -207,7 +215,7 @@ a quick way to check the plumbing before wiring the network in.
 python test_bab.py
 ```
 
-17 checks. The portfolio and factor machinery is verified against simulated panels
+17 checks, all passing. The portfolio and factor machinery is verified against simulated panels
 whose data-generating process fixes the right answer in advance: a planted flat
 security market line has to come back through the BAB factor at the level the
 leverage arithmetic implies, a planted beta-proportional alpha has to come back
@@ -218,5 +226,108 @@ across December.
 
 ### Results
 
-Not yet filled in. The source data is not in this repository, so the tables above
-have to be regenerated locally before any corrected number can be reported here.
+Run on the full CRSP common-stock tape (SHRCD 10 and 11), 1,636,563 firm-months and
+15,862 firms, 1996 to 2023. The network was retrained on this universe with the
+notebook's tuned settings: 128 hidden units, ReLU, lr 3e-4, 12-month lookback, batch
+256, 30 epochs, train 2005-2012, validate 2013-2017, test 2018-2023. Features are
+built once over the whole panel and split by the target month, so no months are lost
+at the split boundaries. Fama-French factors come from Ken French's data library.
+
+Trading 2018 to 2023: 72 months, a median of 3,709 names per month, neural betas
+covering 91.5% of traded firm-months and rolling betas 77.5%.
+
+**The headline: the network did not learn beta. It learned volatility.**
+
+| Predicted beta correlates with | Neural | Rolling OLS |
+| --- | --- | --- |
+| Trailing 12-month volatility | **0.588** | 0.272 |
+| A 60-month regression beta | 0.235 | — |
+| Trailing 12-month return | -0.102 | 0.036 |
+| Previous month's return | -0.203 | -0.001 |
+
+Mean within-month cross-sectional correlations over the 217,066 firm-months where
+both estimates exist, from `diagnose_beta.py`. The learned beta tracks the firm's own
+return dispersion two and a half times more closely than it tracks the thing it is
+named after.
+
+The distributions say the same:
+
+| | Mean | Std | p1 | p99 | Share negative | Median monthly change |
+| --- | --- | --- | --- | --- | --- | --- |
+| Neural | 1.169 | 0.349 | 0.614 | 2.185 | **0.00%** | 0.130 |
+| Rolling OLS | 1.247 | 0.807 | -0.350 | 3.621 | 2.27% | 0.025 |
+
+The learned beta is **never negative once**, in the 217,066 firm-months compared here
+or across all 256,292 it was estimated for, where its minimum is 0.394. A real beta is
+negative 2.3% of the time; a volatility is negative never. It also carries less than
+half the cross-sectional dispersion while moving five times as much month to month,
+so it is simultaneously more compressed and noisier — and it costs four times the
+turnover to trade.
+
+This follows from the objective. The loss is the RMSE of `alpha + beta * mkt` against
+the realised return. In a month when the market barely moves, the cheapest way to
+reduce squared error on a firm that swung 20% is to hand it a large beta, whatever
+its actual co-movement. The training curve agrees that little was learned: validation
+RMSE was 0.15179 at epoch 1 and 0.15193 at epoch 30, with the best epoch being the
+second. Test RMSE was 0.211, against 0.128 in the notebook — not comparable, since
+that figure came from 80 large survivors rather than the whole tape.
+
+**Strategy results, 2018 to 2023, equal-weighted.** `ff_alpha` is the monthly alpha
+against Mkt-RF, SMB and HML, with Newey-West t-statistics throughout.
+
+| Strategy | Mean monthly | t | Sharpe | FF alpha | alpha t | Turnover |
+| --- | --- | --- | --- | --- | --- | --- |
+| Rolling OLS, Q5-Q1 | 0.0062 | 0.75 | 0.33 | 0.0012 | 0.27 | 0.23 |
+| Rolling OLS, BAB | 0.0010 | 0.11 | 0.04 | -0.0072 | -1.13 | |
+| Neural, Q5-Q1 | -0.0006 | -0.06 | -0.02 | -0.0060 | -1.12 | 0.95 |
+| Neural, BAB | 0.0021 | 0.50 | 0.23 | 0.0020 | 0.69 | |
+
+Value-weighted, the rolling-OLS spread is 0.0096 (t = 1.05) and the neural spread
+-0.0005 (t = -0.11).
+
+**Nothing here is significant.** There was no betting-against-beta premium on either
+estimator over this window, and the learned beta did not beat the regression it was
+meant to replace on any of return, Sharpe, alpha or turnover.
+
+**The original result does not replicate.** The superseded table above reports -74bps
+equal-weighted and -151bps value-weighted. Rebuilt with betas attached to the correct
+firm-months and portfolios re-formed monthly, on the same universe construction rule
+of ten firms per industry with complete histories, the equal-weighted spread is
+**+203bps per month** (t = 1.61) for the neural beta and +239bps (t = 1.90) for
+rolling OLS. The sign flips. That panel is a different random draw of firms than the
+notebook's, so this is not an exact reproduction of those 80 firms, but the direction
+is the same as on the full tape and the original negative spread appears nowhere.
+
+**A routine screen flips the sign, which is its own warning.** Dropping stocks under
+$5 at formation — a standard filter, since equal-weighted sorts over the whole tape
+are dominated by microcaps nobody can trade — moves the neural BAB factor from
++0.0021 (t = 0.50) to **-0.0087 (t = -2.06)**, alpha -0.0082 (t = -2.81), and the
+neural Q5-Q1 spread from -0.0006 to +0.0245 (t = 3.70) with an alpha of 0.0195
+(t = 4.92). A result that reverses on a $5 price screen is a statement about which
+stocks are in the sample, not about beta. The value-weighted version of that same
+spread is 0.0051 (t = 1.18), which locates it in small names.
+
+![Cumulative return](bab.png)
+
+Over 2018 to 2023 the market nearly doubled while both BAB variants ended flat to
+down: rolling OLS finished at 0.83 times capital, the neural version at 1.12, against
+1.80 for the market.
+
+### What this means for the project
+
+The interesting finding is no longer the quintile spread. It is that a network
+trained to minimise return-reconstruction error learns conditional volatility and
+calls it beta. That is a real and diagnosable failure of the objective, it is
+visible in four independent places — the correlation with volatility, the complete
+absence of negative values, the compressed dispersion, the flat validation curve —
+and it explains why the betas do not sort returns the way a beta should.
+
+`diagnose_beta.py` regenerates both tables above, and needs no portfolio at all: a
+beta estimator can be judged on whether it behaves like a beta before anyone asks
+whether it makes money.
+
+It also points at the fix, which is the natural next step: identify beta from
+co-movement rather than from return magnitude. Predicting a vector of factor
+loadings against `r = alpha + beta'F` gives the network something magnitude alone
+cannot satisfy, and penalising the residual correlation with the market gives beta
+a target that volatility cannot imitate.
