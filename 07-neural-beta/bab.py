@@ -382,8 +382,8 @@ def quantile_portfolios(panel: pd.DataFrame, beta_col: str = "beta",
 
 def bab_factor(panel: pd.DataFrame, beta_col: str = "beta",
                ret_col: str = "ret", rf: pd.Series | None = None,
-               beta_floor: float = 0.25,
-               shrink: float = 0.0) -> pd.DataFrame:
+               beta_floor: float = 0.25, shrink: float = 0.0,
+               return_weights: bool = False):
     """Frazzini-Pedersen betting-against-beta factor.
 
     Each month, rank betas and put rank-proportional weights on the two halves:
@@ -408,7 +408,12 @@ def bab_factor(panel: pd.DataFrame, beta_col: str = "beta",
     Returns
     -------
     DataFrame indexed by month with the factor return, both leg returns, the
-    leg betas, and the leverage applied to each leg.
+    leg betas, and the leverage applied to each leg. With `return_weights`,
+    also a wide frame of the levered position in each name, which is what
+    turnover and therefore trading costs are computed from. The long leg is
+    positive and the short leg negative, and each is levered to beta one, so
+    the gross exposure is larger than one and the costs are correspondingly
+    larger than a plain long-short sort's.
     """
     df = panel.dropna(subset=[beta_col, ret_col]).copy()
     if shrink:
@@ -416,6 +421,7 @@ def bab_factor(panel: pd.DataFrame, beta_col: str = "beta",
 
     rf_map = {} if rf is None else dict(rf)
     rows = []
+    weight_rows = []
 
     for t, g in df.groupby("t", sort=True):
         if len(g) < 4:
@@ -442,6 +448,12 @@ def bab_factor(panel: pd.DataFrame, beta_col: str = "beta",
         lev_hi = 1.0 / max(abs(b_hi), beta_floor) * np.sign(b_hi or 1.0)
         lev_lo = 1.0 / max(abs(b_lo), beta_floor) * np.sign(b_lo or 1.0)
 
+        if return_weights:
+            levered = w_lo * lev_lo - w_hi * lev_hi
+            weight_rows.append(pd.DataFrame({
+                "t": t, "PERMNO": g["PERMNO"].to_numpy(),
+                "w": levered.to_numpy()}))
+
         r_free = float(rf_map.get(t, 0.0))
         rows.append({
             "t": t,
@@ -451,7 +463,14 @@ def bab_factor(panel: pd.DataFrame, beta_col: str = "beta",
             "lev_low": lev_lo, "lev_high": lev_hi,
         })
 
-    return pd.DataFrame(rows).set_index("t")
+    out = pd.DataFrame(rows).set_index("t")
+    if not return_weights:
+        return out
+
+    weights = (pd.concat(weight_rows).pivot_table(
+        index="t", columns="PERMNO", values="w", fill_value=0.0)
+        if weight_rows else pd.DataFrame())
+    return out, weights
 
 
 # --------------------------------------------------------------------------
@@ -592,8 +611,8 @@ def compare_estimators(panel: pd.DataFrame, beta_cols: dict[str, str],
                        ret_col: str = "ret", rf: pd.Series | None = None,
                        factors: pd.DataFrame | None = None,
                        n_portfolios: int = 5, weight: str = "ew",
-                       cost_bps: float = 10.0,
-                       include_bab: bool = True) -> pd.DataFrame:
+                       cost_bps: float = 10.0, include_bab: bool = True,
+                       mktcap_lag: str = "mktcap_lag") -> pd.DataFrame:
     """Run the same strategy on several beta estimates and stack the results.
 
     This is the question the project is really asking: a beta estimator earns
@@ -611,7 +630,8 @@ def compare_estimators(panel: pd.DataFrame, beta_cols: dict[str, str],
             continue
 
         res = quantile_portfolios(panel, beta_col=col, ret_col=ret_col,
-                                  n_portfolios=n_portfolios, weight=weight)
+                                  n_portfolios=n_portfolios, weight=weight,
+                                  mktcap_lag=mktcap_lag)
         if "spread" in res.returns:
             hi = f"q{n_portfolios}"
             tno = (turnover(res.weights[hi]).add(turnover(res.weights["q1"]),
@@ -622,9 +642,13 @@ def compare_estimators(panel: pd.DataFrame, beta_cols: dict[str, str],
                 factors, tno, cost_bps))
 
         if include_bab:
-            factor = bab_factor(panel, beta_col=col, ret_col=ret_col, rf=rf)
+            factor, weights = bab_factor(panel, beta_col=col, ret_col=ret_col,
+                                         rf=rf, return_weights=True)
             if len(factor):
+                # Levering each leg to beta one raises gross exposure, so BAB
+                # is costed on its levered weights rather than on rank weights.
                 rows.append(performance_summary(
-                    factor["bab"], f"{label}: BAB", factors, None, cost_bps))
+                    factor["bab"], f"{label}: BAB", factors,
+                    turnover(weights) if len(weights) else None, cost_bps))
 
     return pd.DataFrame(rows).set_index("name")

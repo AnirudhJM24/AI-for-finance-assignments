@@ -13,7 +13,7 @@ results.
 | --- | --- | --- |
 | [05](05-return-jumps/) | Return jumps | Will a stock move more than 10% next month? |
 | [06](06-bankruptcy-prediction/) | Bankruptcy prediction | Will a firm file for bankruptcy next year? |
-| [07](07-neural-beta/) | Neural beta | Can a neural network estimate market beta better than a rolling regression? |
+| [07](07-neural-beta/) | Neural beta | Can a neural network estimate market beta better than a rolling regression, and is it worth trading? |
 | [08](08-crypto-beta/) | Crypto beta | What are cryptocurrencies actually exposed to? |
 | [09](09-loan-pricing/) | Loan pricing | What determines the spread on a syndicated loan? |
 | [10](10-prediction-markets/) | Prediction markets | Do Kalshi and Polymarket prices lead the underlying assets? |
@@ -24,7 +24,7 @@ results.
 | --- | --- | --- | --- |
 | 05 | Post-LASSO logistic | Test AUC | 0.684 |
 | 06 | Random forest | Test AUC | 0.875 |
-| 07 | MLP, returns and industry | Test RMSE | 0.128 |
+| 07 | MLP beta, BAB factor | Monthly FF3 alpha | 0.0092 (t = 2.13) |
 | 08 | MLP, window 3, sigmoid | Val RMSE | 0.227 |
 | 09 | LightGBM | Test R2 | 0.591 |
 | 10 | Kalshi against CME FedWatch | Correlation | 0.79 |
@@ -43,12 +43,10 @@ AUC, KS, and decile lift are what actually separate the models.
 5 of 11 in assignment 6, matching the full models both times. Adding Fama-French
 factors to the neural beta in assignment 7 made test RMSE worse.
 
-**A model can optimise the stated loss and still learn the wrong quantity.** The
-assignment 7 network minimises return-reconstruction error and gets a beta that
-correlates 0.59 with trailing volatility but only 0.24 with a regression beta, and
-is never negative once in 256,292 firm-months. Nothing in the loss curve says so;
-it takes asking what the output actually tracks. See
-[07-neural-beta](07-neural-beta/#strategy-extension).
+**Benchmark against doing nothing.** In [07-neural-beta](07-neural-beta/), a
+constant beta of 1 hedges better than both a 60-month regression and a neural
+network with 48 features. No loss curve reveals that; it takes comparing against
+the null.
 
 **Trees beat neural networks on tabular data at these sample sizes.** In assignment 9,
 LightGBM reaches test R2 0.591 against 0.263 for an MLP on 3,590 training rows.
