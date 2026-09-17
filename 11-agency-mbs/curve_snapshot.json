@@ -1,0 +1,20 @@
+{
+  "asof": "2026-09-15",
+  "source": "FRED daily constant-maturity Treasury series and MORTGAGE30US",
+  "note": "Committed so the model runs without network access. Refresh with `python curves.py --refresh`.",
+  "par_yields": {
+    "0.0833": 3.93,
+    "0.25": 4.11,
+    "0.5": 4.17,
+    "1.0": 4.39,
+    "2.0": 4.67,
+    "3.0": 4.76,
+    "5.0": 4.83,
+    "7.0": 4.91,
+    "10.0": 5.00,
+    "20.0": 5.40,
+    "30.0": 5.36
+  },
+  "mortgage30us": 6.76,
+  "mortgage30us_asof": "2026-09-10"
+}

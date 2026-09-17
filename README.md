@@ -1,11 +1,12 @@
 # AI for Finance Assignments
 
 Coursework applying machine learning to equity returns, credit risk, factor
-estimation, loan pricing, and prediction markets.
+estimation, loan pricing, prediction markets, and mortgage cash flows.
 
-Each assignment lives in its own folder with three things: a notebook holding the
-full analysis, a written report as PDF, and a README summarising the method and the
-results.
+Each assignment lives in its own folder with a README summarising the method and
+the results. Most also carry a notebook holding the full analysis and a written
+report as PDF; the later ones are tested Python modules with a command-line entry
+point instead.
 
 ## Contents
 
@@ -17,6 +18,7 @@ results.
 | [08](08-crypto-beta/) | Crypto beta | What are cryptocurrencies actually exposed to? |
 | [09](09-loan-pricing/) | Loan pricing | What determines the spread on a syndicated loan? |
 | [10](10-prediction-markets/) | Prediction markets | Do Kalshi and Polymarket prices lead the underlying assets? |
+| [11](11-agency-mbs/) | Agency MBS | What is the borrower's right to refinance worth to the investor who is short it? |
 
 ## Headline results
 
@@ -28,6 +30,7 @@ results.
 | 08 | MLP, window 3, sigmoid | Val RMSE | 0.227 |
 | 09 | LightGBM | Test R2 | 0.591 |
 | 10 | Kalshi against CME FedWatch | Correlation | 0.79 |
+| 11 | Refi-aware prepayment, 200 PSA | Effective convexity | -365, against +46 at a fixed speed |
 
 ## Recurring themes
 
@@ -46,7 +49,9 @@ factors to the neural beta in assignment 7 made test RMSE worse.
 **Benchmark against doing nothing.** In [07-neural-beta](07-neural-beta/), a
 constant beta of 1 hedges better than both a 60-month regression and a neural
 network with 48 features. No loss curve reveals that; it takes comparing against
-the null.
+the null. Assignment 11 uses the same device in reverse: pricing the pool at a
+speed that cannot respond to rates is the null that makes the real behaviour
+visible.
 
 **Trees beat neural networks on tabular data at these sample sizes.** In assignment 9,
 LightGBM reaches test R2 0.591 against 0.263 for an MLP on 3,590 training rows.
@@ -67,9 +72,11 @@ to be pointed at your own copies. Each assignment README lists what it needs.
 | FRED macro series | 05, 09 |
 | Coinbase, Yahoo Finance | 08, 10 |
 | Kalshi and Polymarket APIs | 10 |
+| FRED Treasury and mortgage rates | 11 |
 
 Assignment 10 pulls from live APIs, so re-running it will produce different numbers
-than the ones recorded in its README.
+than the ones recorded in its README. Assignment 11 also reads from FRED, but caches
+a committed snapshot of the curve, so it reproduces exactly until asked to refresh.
 
 ## Setup
 
